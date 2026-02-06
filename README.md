@@ -1,0 +1,29 @@
+# DefaultEcs Unity EntityVisualize
+This library displays a list of structure [DefaultEcs](https://github.com/friflo/Friflo.Engine.ECS) entities and their structure in the Unity Inspector.
+
+# Requirement
+- Unity 2022.1 higher
+
+# Dependency
+- [DefaultEcs](https://github.com/Doraku/DefaultEcs/)
+
+## Git Path (Unity Package Manager)
+> https://github.com/kurobon-jp/DefaultEcs.Unity.EntityVisualize.git?path=Assets/DefaultEcs.Unity.EntityVisualize/
+
+## Usage 
+
+### Register World
+```csharp
+public class Main : MonoBehaviour
+{
+    private void Start()
+    {
+        var world = new World();
+        ~
+        EntityVisualizer.Register("main", world);
+    }
+}
+```
+
+Window -> DefaultEcs -> Entities Hierarchy<br>
+<img width="800" src="./image.png">
