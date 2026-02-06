@@ -11,7 +11,7 @@ namespace DefaultEcs.Unity.EntityVisualize
     /// </summary>
     public static class EntityVisualizer
     {
-        internal static Dictionary<string, World> Worlds { get; } = new();
+        public static Dictionary<string, World> Worlds { get; } = new();
 
         public static event Action<string, World> OnRegistered;
 

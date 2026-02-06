@@ -1,5 +1,5 @@
 {
-    "name": "FrifloECS.Unity.EntityVisualize",
+    "name": "DefaultEcs.Unity.EntityVisualize",
     "precompiledReferences": [
         "DefaultEcs.dll",
         "Mono.Cecil.dll"
