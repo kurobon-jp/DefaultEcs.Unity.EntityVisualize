@@ -1,17 +1,7 @@
 {
-    "name": "DefaultEcs.Unity.EntityVisualize",
-    "rootNamespace": "",
-    "references": [],
-    "includePlatforms": [],
-    "excludePlatforms": [],
-    "allowUnsafeCode": false,
-    "overrideReferences": true,
+    "name": "FrifloECS.Unity.EntityVisualize",
     "precompiledReferences": [
         "DefaultEcs.dll",
         "Mono.Cecil.dll"
-    ],
-    "autoReferenced": true,
-    "defineConstraints": [],
-    "versionDefines": [],
-    "noEngineReferences": false
+    ]
 }
