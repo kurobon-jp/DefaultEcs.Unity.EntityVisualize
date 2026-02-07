@@ -9,4 +9,5 @@ obj
 Logs
 
 Assets/Packages*
-Assets/package.json*
+Assets/packages.config*
+Assets/NuGet.config*
