@@ -267,13 +267,16 @@ namespace DefaultEcs.Unity.EntityVisualize.Editor
         /// </summary>
         private void OnStopEditor()
         {
-            _cancellationTokenSource?.Cancel();
             Selection.activeObject = null;
-            _treeView.ClearSelection();
-            _treeView.CollapseAll();
+            _cancellationTokenSource?.Cancel();
+            _cancellationTokenSource = null;
+            if (_rootItems == null) return;
             _rootItems.Clear();
-            _treeView.SetRootItems(_rootItems);
-            _treeView.Rebuild();
+            if (_treeView == null) return;
+            _treeView?.ClearSelection();
+            _treeView?.CollapseAll();
+            _treeView?.SetRootItems(_rootItems);
+            _treeView?.Rebuild();
         }
 
         /// <summary>

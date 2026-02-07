@@ -1,162 +1,171 @@
 using System;
 using System.IO;
 using System.Linq;
+using UnityEditor;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
-using UnityEditor;
-using UnityEditor.Compilation;
 using UnityEngine;
 
 namespace DefaultEcs.Unity.EntityVisualize.Editor
 {
-    public class DLLModifier : AssetPostprocessor
+    public sealed class DLLModifier : AssetPostprocessor
     {
-        private const string TargetDllName = "DefaultEcs.dll";
-        private const string WorldType = "DefaultEcs.World";
-        private const string PublisherType = "DefaultEcs.Internal.Publisher";
-        private const string ComponentReadMessageType = "DefaultEcs.Internal.Message.ComponentReadMessage";
-        private const string AddedFieldName = "OnPublish";
+        private const string TargetAssemblyName = "DefaultEcs.dll";
 
-        private static void OnPostprocessAllAssets(string[] importedAssets, string[] deletedAssets,
+        private static void OnPostprocessAllAssets(
+            string[] importedAssets,
+            string[] deletedAssets,
             string[] movedAssets,
             string[] movedFromAssetPaths)
         {
             foreach (var path in importedAssets)
             {
-                if (path.EndsWith(TargetDllName, StringComparison.OrdinalIgnoreCase))
+                if (path.EndsWith(TargetAssemblyName, StringComparison.OrdinalIgnoreCase))
                 {
-                    EditorApplication.delayCall += () => ProcessDLL(path);
+                    EditorApplication.delayCall += () => ProcessAssembly(path);
                 }
             }
         }
 
-        private static void ProcessDLL(string dllPath)
+        private static void ProcessAssembly(string dllPath)
         {
+            var fullPath = Path.GetFullPath(dllPath);
             if (!File.Exists(dllPath)) return;
-
-            try
+            if (!InjectMessageBridge(fullPath))
             {
-                if (CheckIfAlreadyModified(dllPath))
-                {
-                    Debug.Log($"[DefaultEcs Patcher] Already patched → skip: {dllPath}");
-                    return;
-                }
-
-                Modify(dllPath);
-                AssetDatabase.ImportAsset(dllPath, ImportAssetOptions.ForceUpdate); // 今回はForceUpdateで確実にリロード
-                CompilationPipeline.RequestScriptCompilation();
-
-                Debug.Log($"[DefaultEcs Patcher] Successfully patched {TargetDllName}.");
+                Debug.Log($"[DefaultEcs Patcher] Already patched → skip: {dllPath}");
+                return;
             }
-            catch (Exception e)
-            {
-                Debug.LogError($"[DefaultEcs Patcher] Patch failed\n{e}");
-            }
+
+            Debug.Log($"[DefaultEcs Patcher] Successfully patched {dllPath}.");
+            AssetDatabase.Refresh();
         }
 
-        private static bool CheckIfAlreadyModified(string dllPath)
+        private static bool InjectMessageBridge(string assemblyPath)
         {
-            try
+            var resolver = new DefaultAssemblyResolver();
+            resolver.AddSearchDirectory(Path.GetDirectoryName(typeof(object).Assembly.Location));
+            resolver.AddSearchDirectory(Path.GetDirectoryName(assemblyPath));
+
+            var readerParameters = new ReaderParameters { ReadWrite = true, AssemblyResolver = resolver };
+
+            using (var assembly = AssemblyDefinition.ReadAssembly(assemblyPath, readerParameters))
             {
-                using var assembly = AssemblyDefinition.ReadAssembly(dllPath);
-                var type = assembly.MainModule.GetType(PublisherType);
-                if (type == null) return false;
+                var module = assembly.MainModule;
+                var messageBridge = module.Types.FirstOrDefault(t => t.FullName == "DefaultEcs.MessageBridge");
+                if (messageBridge != null) return false;
+                // 1. 既存型の解決
+                var worldType = module.Types.First(t => t.FullName == "DefaultEcs.World");
+                var worldIdField = worldType.Fields.First(f => f.Name == "WorldId");
+                var componentReadMessageType =
+                    module.Types.First(t => t.FullName == "DefaultEcs.Internal.Message.ComponentReadMessage");
+                var observerTypeRef = module.ImportReference(typeof(IObserver<object>));
 
-                if ((type.Attributes & TypeAttributes.Public) == 0) return false;
+                // IObserver<object>.OnNext(object) の参照を確実に作成
+                var onNextMethodDef = typeof(IObserver<object>).GetMethod("OnNext");
+                var onNextMethod = module.ImportReference(onNextMethodDef);
 
-                var field = type.Fields.FirstOrDefault(f => f.Name == AddedFieldName);
-                if (field == null) return false;
+                // 2. MessageBridge クラスの定義
+                messageBridge = new TypeDefinition(
+                    "DefaultEcs",
+                    "MessageBridge",
+                    TypeAttributes.Public | TypeAttributes.Class | TypeAttributes.Abstract | TypeAttributes.Sealed |
+                    TypeAttributes.BeforeFieldInit,
+                    module.TypeSystem.Object);
 
-                var actionTypeRef = assembly.MainModule.ImportReference(typeof(Action<int, object>));
-                return field.FieldType.FullName == actionTypeRef.FullName;
+                var worldField =
+                    new FieldDefinition("_world", FieldAttributes.Private | FieldAttributes.Static, worldType);
+                var observerField = new FieldDefinition("_observer", FieldAttributes.Private | FieldAttributes.Static,
+                    observerTypeRef);
+                messageBridge.Fields.Add(worldField);
+                messageBridge.Fields.Add(observerField);
+
+                // SetObserver
+                var setObserverMethod = new MethodDefinition("SetObserver",
+                    MethodAttributes.Public | MethodAttributes.Static, module.TypeSystem.Void);
+                setObserverMethod.Parameters.Add(new ParameterDefinition("world", ParameterAttributes.None, worldType));
+                setObserverMethod.Parameters.Add(new ParameterDefinition("observer", ParameterAttributes.None,
+                    observerTypeRef));
+                var ilSet = setObserverMethod.Body.GetILProcessor();
+                ilSet.Emit(OpCodes.Ldarg_0);
+                ilSet.Emit(OpCodes.Stsfld, worldField);
+                ilSet.Emit(OpCodes.Ldarg_1);
+                ilSet.Emit(OpCodes.Stsfld, observerField);
+                ilSet.Emit(OpCodes.Ret);
+                messageBridge.Methods.Add(setObserverMethod);
+
+                // 3. Publish<T>(int, T) の作成
+                var publishGeneric = new MethodDefinition("Publish",
+                    MethodAttributes.Assembly | MethodAttributes.Static,
+                    module.TypeSystem.Void);
+                var GP = new GenericParameter("T", publishGeneric);
+                publishGeneric.GenericParameters.Add(GP);
+                publishGeneric.Parameters.Add(new ParameterDefinition("worldId", ParameterAttributes.None,
+                    module.TypeSystem.Int32));
+                publishGeneric.Parameters.Add(new ParameterDefinition("message", ParameterAttributes.None, GP));
+
+                // ローカル変数の定義 (object msgObj)
+                publishGeneric.Body.InitLocals = true;
+                var msgObjVar = new VariableDefinition(module.TypeSystem.Object);
+                publishGeneric.Body.Variables.Add(msgObjVar);
+
+                var ilPub = publishGeneric.Body.GetILProcessor();
+                var endLabel = ilPub.Create(OpCodes.Ret);
+
+                // if (_world == null) return;
+                ilPub.Emit(OpCodes.Ldsfld, worldField);
+                ilPub.Emit(OpCodes.Brfalse, endLabel);
+
+                // if (_world.WorldId != worldId) return;
+                ilPub.Emit(OpCodes.Ldsfld, worldField);
+                ilPub.Emit(OpCodes.Ldfld, worldIdField);
+                ilPub.Emit(OpCodes.Ldarg_0);
+                ilPub.Emit(OpCodes.Bne_Un, endLabel);
+
+                // if (_observer == null) return;
+                ilPub.Emit(OpCodes.Ldsfld, observerField);
+                ilPub.Emit(OpCodes.Brfalse, endLabel);
+
+                // object msgObj = (object)message;
+                ilPub.Emit(OpCodes.Ldarg_1);
+                ilPub.Emit(OpCodes.Box, GP);
+                ilPub.Emit(OpCodes.Stloc, msgObjVar);
+
+                // if (msgObj is ComponentReadMessage) return;
+                ilPub.Emit(OpCodes.Ldloc, msgObjVar);
+                ilPub.Emit(OpCodes.Isinst, componentReadMessageType);
+                ilPub.Emit(OpCodes.Brtrue, endLabel);
+
+                // _observer.OnNext(msgObj);
+                ilPub.Emit(OpCodes.Ldsfld, observerField);
+                ilPub.Emit(OpCodes.Ldloc, msgObjVar);
+                ilPub.Emit(OpCodes.Callvirt, onNextMethod);
+
+                ilPub.Append(endLabel);
+                messageBridge.Methods.Add(publishGeneric);
+                module.Types.Add(messageBridge);
+
+                // 4. Publisher.Publish<T> への注入
+                var publisherType = module.Types.First(t => t.FullName == "DefaultEcs.Internal.Publisher");
+                var targetMethod = publisherType.Methods.First(m => m.Name == "Publish" && m.HasGenericParameters);
+                var targetT = targetMethod.GenericParameters[0];
+
+                // MessageBridge.Publish<T> (targetTを使用) を作成
+                var genericPublishRef = new GenericInstanceMethod(publishGeneric);
+                genericPublishRef.GenericArguments.Add(targetT);
+
+                var ilTarget = targetMethod.Body.GetILProcessor();
+                var lastRet = targetMethod.Body.Instructions.Last(i => i.OpCode == OpCodes.Ret);
+
+                ilTarget.InsertBefore(lastRet, ilTarget.Create(OpCodes.Ldarg_0)); // worldId
+                ilTarget.InsertBefore(lastRet, ilTarget.Create(OpCodes.Ldarg_1)); // message (T&)
+                ilTarget.InsertBefore(lastRet, ilTarget.Create(OpCodes.Ldobj, targetT)); // Dereference
+                ilTarget.InsertBefore(lastRet, ilTarget.Create(OpCodes.Call, genericPublishRef));
+
+                assembly.Write();
+
+                return true;
             }
-            catch
-            {
-                return false;
-            }
-        }
-
-        private static void Modify(string dllPath)
-        {
-            var readerParams = new ReaderParameters { ReadWrite = true };
-            using var assembly = AssemblyDefinition.ReadAssembly(dllPath, readerParams);
-            var module = assembly.MainModule;
-
-            var publisherType = module.GetType(PublisherType);
-            if (publisherType == null) return;
-
-            publisherType.Attributes &= ~TypeAttributes.NotPublic;
-            publisherType.Attributes |= TypeAttributes.Public;
-
-            var actionType = module.ImportReference(typeof(Action<int, object>));
-            var onPublishField = new FieldDefinition(AddedFieldName, FieldAttributes.Public | FieldAttributes.Static,
-                actionType);
-            publisherType.Fields.Add(onPublishField);
-
-            var publishMethod = publisherType.Methods.FirstOrDefault(m =>
-                m.Name == "Publish" &&
-                m.HasGenericParameters &&
-                m.Parameters.Count == 2 &&
-                m.Parameters[0].ParameterType.MetadataType == MetadataType.Int32);
-
-            if (publishMethod == null) return;
-
-            publishMethod.ImplAttributes &= ~MethodImplAttributes.AggressiveInlining;
-            publishMethod.ImplAttributes |= MethodImplAttributes.NoInlining;
-
-            var processor = publishMethod.Body.GetILProcessor();
-            var first = publishMethod.Body.Instructions[0];
-
-            var skipLabel = processor.Create(OpCodes.Nop);
-
-            // if (OnPublish == null) goto skip;
-            processor.InsertBefore(first, processor.Create(OpCodes.Ldsfld, onPublishField));
-            processor.InsertBefore(first, processor.Create(OpCodes.Brfalse_S, skipLabel));
-
-            // OnPublish(worldId, message boxed)
-            processor.InsertBefore(first, processor.Create(OpCodes.Ldsfld, onPublishField)); // this
-            processor.InsertBefore(first, processor.Create(OpCodes.Ldarg_0)); // arg0: int worldId
-
-            // arg1: ref/in T → 値をロードしてbox
-            processor.InsertBefore(first, processor.Create(OpCodes.Ldarg_1)); // &T
-
-            var param1Type = publishMethod.Parameters[1].ParameterType;
-            TypeReference elementType = param1Type;
-
-            if (param1Type.IsByReference)
-            {
-                elementType = param1Type.GetElementType();
-            }
-
-            processor.InsertBefore(first, processor.Create(OpCodes.Ldobj, elementType)); // T value = *(&T)
-
-            // ComponentAddedMessage<T> は struct なので box 必須
-            processor.InsertBefore(first, processor.Create(OpCodes.Box, elementType));
-
-            var invoke = module.ImportReference(typeof(Action<int, object>).GetMethod("Invoke"));
-            processor.InsertBefore(first, processor.Create(OpCodes.Callvirt, invoke));
-
-            // processor.InsertBefore(first, processor.Create(OpCodes.Nop)); // デバッグ用
-
-            processor.InsertBefore(first, skipLabel);
-
-            var worldType = module.GetType(WorldType);
-            if (worldType == null) return;
-            
-            var worldId = worldType.Fields.FirstOrDefault(p => p.Name == "WorldId");
-            if (worldId == null) return;
-
-            worldId.Attributes = FieldAttributes.Public;
-            
-            var componentReadMessageType = module.GetType(ComponentReadMessageType);
-            if (componentReadMessageType == null) return;
-
-            componentReadMessageType.Attributes &= ~TypeAttributes.NotPublic;
-            componentReadMessageType.Attributes |= TypeAttributes.Public;
-
-            Debug.Log("[Patcher] Patched Publish<T> with ref/in handling");
-
-            assembly.Write();
         }
     }
 }
