@@ -271,7 +271,7 @@ namespace DefaultEcs.Unity.EntityVisualize.Editor
             _cancellationTokenSource?.Cancel();
             _cancellationTokenSource = null;
             if (_rootItems == null) return;
-            _rootItems.Clear();
+            _rootItems?.Clear();
             if (_treeView == null) return;
             _treeView?.ClearSelection();
             _treeView?.CollapseAll();

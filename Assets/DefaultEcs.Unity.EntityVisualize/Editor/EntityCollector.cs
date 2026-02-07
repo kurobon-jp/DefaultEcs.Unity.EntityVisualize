@@ -20,9 +20,14 @@ namespace DefaultEcs.Unity.EntityVisualize.Editor
             IsDirty = true;
         }
 
-        public void OnCompleted() { }
-        public void OnError(Exception error) { }
-        
+        public void OnCompleted()
+        {
+        }
+
+        public void OnError(Exception error)
+        {
+        }
+
         public void Bind(World world)
         {
             _world = world;
@@ -35,9 +40,6 @@ namespace DefaultEcs.Unity.EntityVisualize.Editor
             method.Invoke(null, new object[] { world, this });
         }
 
-        /// <summary>
-        /// Ticks this instance
-        /// </summary>
         public List<Entity> CollectEntities()
         {
             _entities.Clear();
