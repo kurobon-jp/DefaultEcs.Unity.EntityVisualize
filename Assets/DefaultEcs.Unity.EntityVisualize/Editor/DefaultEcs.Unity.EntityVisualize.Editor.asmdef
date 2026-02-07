@@ -4,15 +4,14 @@
     "references": [
         "DefaultEcs.Unity.EntityVisualize"
     ],
-    "includePlatforms": [],
+    "includePlatforms": [
+        "Editor"
+    ],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
     "overrideReferences": false,
-    "precompiledReferences": [
-        "DefaultEcs.dll",
-        "Mono.Cecil.dll"
-    ],
-    "autoReferenced": true,
+    "precompiledReferences": [],
+    "autoReferenced": false,
     "defineConstraints": [],
     "versionDefines": [],
     "noEngineReferences": false
