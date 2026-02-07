@@ -8,7 +8,9 @@ This library displays a list of structure [DefaultEcs](https://github.com/Doraku
 - [DefaultEcs](https://www.nuget.org/packages/DefaultEcs/)
 
 ## Git Path (Unity Package Manager)
-> https://github.com/kurobon-jp/DefaultEcs.Unity.EntityVisualize.git?path=Assets/DefaultEcs.Unity.EntityVisualize/
+```
+https://github.com/kurobon-jp/DefaultEcs.Unity.EntityVisualize.git?path=Assets/
+```
 
 ## Usage 
 
