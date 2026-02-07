@@ -7,3 +7,6 @@ Temp
 *.user
 obj
 Logs
+
+Assets/Packages*
+Assets/package.json*
