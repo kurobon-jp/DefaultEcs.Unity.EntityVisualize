@@ -293,7 +293,6 @@ namespace DefaultEcs.Unity.EntityVisualize.Editor
         /// <param name="world">The world</param>
         private void OnSwitchWorld(World world)
         {
-            world.TrimExcess();
             _collector.Bind(world);
         }
 
